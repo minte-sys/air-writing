@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment and temp files
+venv/
+tmp/
+
+# Downloaded automatically on first run
+hand_landmarker.task
+
+# Personal handwriting samples and exports
+my_letters.json
+air_*.json
+air_*.png
+strokes_*.json
+preview.png
