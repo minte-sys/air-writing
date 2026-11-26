@@ -15,3 +15,6 @@ air_*.json
 air_*.png
 strokes_*.json
 preview.png
+
+# Test cache
+.pytest_cache/

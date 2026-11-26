@@ -18,6 +18,14 @@ Text mode
     Shift + letter     replace the last letter with that letter
   Corrections are saved to my_letters.json and used from then on.
 
+Recording mode (collects labeled letters for evaluate.py)
+  python air_writing.py --record --writer alex
+  The app asks for one letter at a time; write it and pause. Each letter is saved with its
+  strokes and timing to data/recordings/<writer>/<session>.jsonl.
+    Backspace          discard the unfinished letter, or delete the last saved one and redo it
+    n                  skip this letter for now (asked again at the end)
+    z                  undo the last stroke of the current letter
+
 Keyboard
   m mode   g glow   z undo   c clear   s smoothing   e export   space   backspace   q / Esc quit
 
@@ -37,6 +45,7 @@ import mediapipe as mp
 import numpy as np
 
 from letter_model import LetterRecognizer
+from recording import DEFAULT_DIR, Recorder
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -216,16 +225,25 @@ def erase_at(strokes, p, radius):
             out.append(s)
             continue
         changed = True
-        run = []
-        for pt, k in zip(s["pts"], keep):
+        times = s.get("t", [None] * len(s["pts"]))
+        run, run_t = [], []
+        for pt, t, k in zip(s["pts"], times, keep):
             if k:
                 run.append(pt)
+                run_t.append(t)
             elif run:
-                out.append({**s, "pts": run})
-                run = []
+                out.append(_piece(s, run, run_t))
+                run, run_t = [], []
         if run:
-            out.append({**s, "pts": run})
+            out.append(_piece(s, run, run_t))
     return out, changed
+
+
+def _piece(s, pts, times):
+    piece = {**s, "pts": pts}
+    if "t" in s:
+        piece["t"] = times
+    return piece
 
 
 CORE_KERNEL = np.ones((5, 5), np.uint8)
@@ -288,8 +306,9 @@ def button_at(buttons, p):
 # ---------------------------------------------------------------- app
 
 class App:
-    def __init__(self, w, h, letter_pause):
+    def __init__(self, w, h, letter_pause, recorder=None):
         self.w, self.h = w, h
+        self.recorder = recorder
         self.letter_pause = letter_pause
         self.canvas = np.zeros((h, w, 3), np.uint8)
         self.strokes, self.current = [], None
@@ -305,6 +324,9 @@ class App:
         self.hover_btn, self.hover_since, self.hover_armed = None, 0.0, True
         self.fist_since, self.fist_done = None, False
 
+        if recorder is not None:
+            self.mode = "record"
+
         self.recognizer = None
         if os.path.exists(LETTER_WEIGHTS):
             self.recognizer = LetterRecognizer(LETTER_WEIGHTS, MY_LETTERS)
@@ -317,7 +339,7 @@ class App:
 
     @property
     def color(self):
-        return TEXT_COLOR if self.mode == "text" else PALETTE[self.color_idx][1]
+        return PALETTE[self.color_idx][1] if self.mode == "paint" else TEXT_COLOR
 
     def pending_letter(self):
         return [s for s in self.strokes if s.get("letter")]
@@ -337,7 +359,7 @@ class App:
     # --- text mode
     def recognize_pending(self, now):
         pending = self.pending_letter()
-        if not pending or self.recognizer is None:
+        if not pending or (self.recognizer is None and self.mode != "record"):
             return
         pts = np.concatenate([np.array(s["pts"], np.float32) for s in pending])
         x0, y0 = pts.min(axis=0)
@@ -345,12 +367,32 @@ class App:
         self.remove_pending()
         if max(x1 - x0, y1 - y0) < MIN_LETTER_PX:
             return                                  # too small: probably an accidental touch
+        if self.mode == "record":
+            self.save_recording(pending)
+            return
         preds, img = self.recognizer.predict([s["pts"] for s in pending])
         if not preds:
             return
         self.text += preds[0][0]
         self.last_pred = {"img": img, "preds": preds}
         self.pops.append((preds[0][0], (int((x0 + x1) / 2), int((y0 + y1) / 2)), int(y1 - y0), now))
+
+    # --- recording mode
+    def save_recording(self, pending):
+        rec = self.recorder
+        if rec.done:
+            return
+        sample = rec.save(pending, (self.w, self.h), self.smoothing, self.letter_pause)
+        self.say(f"Saved '{sample['label']}'" + ("  -  all done, press q to quit" if rec.done else ""), 4)
+
+    def record_back(self):
+        """Backspace in recording mode: drop the unfinished letter, else redo the last saved one."""
+        if self.current is not None or self.pending_letter():
+            self.current = None
+            self.remove_pending()
+        else:
+            label = self.recorder.undo()
+            self.say(f"Deleted the last '{label}', write it again" if label else "Nothing to delete")
 
     def correct_last(self, letter):
         if not self.text or self.last_pred is None or not self.text[-1].isalpha():
@@ -361,13 +403,17 @@ class App:
         self.say(f"Learned your '{letter}'  ({self.recognizer.n_personal} saved examples)")
 
     def add_space(self, now):
+        if self.mode == "record":
+            return
         self.recognize_pending(now)
         if self.text and not self.text.endswith(" "):
             self.text += " "
         self.last_pred = None
 
     def delete(self):
-        if self.pending_letter():
+        if self.mode == "record":
+            self.record_back()
+        elif self.pending_letter():
             self.remove_pending()                    # first discard an unfinished letter
         elif self.text:
             self.text = self.text[:-1]
@@ -392,6 +438,9 @@ class App:
             self.canvas[:] = 0
 
     def set_mode(self, mode, now):
+        if self.mode == "record":
+            self.say("Recording session: restart without --record to paint or write")
+            return
         self.finish_stroke()
         if mode == "paint":
             self.recognize_pending(now)
@@ -414,12 +463,13 @@ class App:
             self.last_activity = now
         elif drawing:
             if self.current is None:
-                self.current = {"pts": [tip], "color": self.color, "thick": THICKNESS,
-                                "letter": self.mode == "text"}
+                self.current = {"pts": [tip], "t": [now], "color": self.color, "thick": THICKNESS,
+                                "letter": self.mode != "paint"}
             elif math.dist(self.current["pts"][-1], tip) >= MIN_STEP_PX:
                 cv2.line(self.canvas, self.current["pts"][-1], tip, self.current["color"],
                          THICKNESS, cv2.LINE_AA)
                 self.current["pts"].append(tip)
+                self.current["t"].append(now)
             self.last_activity = now
         else:
             self.finish_stroke()
@@ -443,8 +493,8 @@ class App:
         else:
             self.fist_since = None
 
-        # text mode: recognize after a pause
-        if (self.mode == "text" and self.current is None and self.pending_letter()
+        # text / record mode: finish the letter after a pause
+        if (self.mode != "paint" and self.current is None and self.pending_letter()
                 and now - self.last_activity >= self.letter_pause):
             self.recognize_pending(now)
 
@@ -456,6 +506,8 @@ class App:
         self.draw_toolbar(frame, now)
         if self.mode == "text":
             self.draw_text_bar(frame, now)
+        elif self.mode == "record":
+            self.draw_record_bar(frame)
 
         if gesture == "fist" and self.fist_since is not None and palm is not None and not self.fist_done:
             frac = min(1.0, (now - self.fist_since) / FIST_SECONDS)
@@ -476,7 +528,7 @@ class App:
 
         status = {"write": "Erasing" if self.tool == "eraser" else "Writing", "select": "Pointer",
                   "fist": "Fist", "idle": "Pen up"}.get(gesture, "No hand") if tip or palm else "No hand"
-        put_text(frame, f"{'TEXT' if self.mode == 'text' else 'PAINT'}  |  {status}", (16, TOOLBAR_H + 34), 0.8)
+        put_text(frame, f"{self.mode.upper()}  |  {status}", (16, TOOLBAR_H + 34), 0.8)
         put_text(frame, f"{fps:4.1f} fps  smoothing {'on' if self.smoothing else 'off'}  "
                         f"glow {'on' if self.glow else 'off'}", (16, TOOLBAR_H + 62), 0.5)
         if now < self.message_until:
@@ -525,9 +577,25 @@ class App:
         put_text(frame, "m mode  g glow  z undo  c clear  s smooth  e export  q quit",
                  (20, self.h - 10), 0.5, (200, 200, 200), 1)
 
+    def draw_record_bar(self, frame):
+        rec = self.recorder
+        y0 = self.h - 110
+        region = frame[y0:self.h - 30]
+        cv2.addWeighted(region, 0.35, np.zeros_like(region), 0.65, 0, dst=region)
+        if rec.done:
+            put_text(frame, f"Done: {rec.n_saved} letters saved", (20, self.h - 50), 1.3, (90, 255, 90), 3)
+        else:
+            put_text(frame, "Write:", (20, self.h - 50), 1.1, (200, 200, 200), 2)
+            put_text(frame, rec.target, (20 + text_width("Write: ", 1.1, 2), self.h - 44), 2.0, (0, 255, 255), 4)
+            progress = f"{rec.n_saved + 1} / {rec.total}"
+            put_text(frame, progress, (self.w - 20 - text_width(progress, 0.9, 2), self.h - 52), 0.9)
+        put_text(frame, f"REC  {rec.writer}  ->  {os.path.relpath(rec.path)}", (20, y0 - 10), 0.5, (80, 80, 255), 1)
+        put_text(frame, "Backspace redo last  n skip  z undo stroke  q quit",
+                 (20, self.h - 10), 0.5, (200, 200, 200), 1)
+
     def draw_pending_timer(self, frame, now):
         pending = self.pending_letter()
-        if self.mode != "text" or not pending or self.current is not None:
+        if self.mode == "paint" or not pending or self.current is not None:
             return
         pts = np.concatenate([np.array(s["pts"], np.int32) for s in pending])
         x0, y0 = (int(v) - 15 for v in pts.min(axis=0))
@@ -580,8 +648,12 @@ class App:
             self.export()
         elif k == ord(" ") and self.mode == "text":
             self.add_space(now)
-        elif k in (8, 127) and self.mode == "text":
+        elif k in (8, 127) and self.mode != "paint":
             self.delete()
+        elif k == ord("n") and self.mode == "record":
+            self.finish_stroke()
+            self.remove_pending()
+            self.recorder.skip()
         elif k in (ord("1"), ord("2"), ord("3")) and self.last_pred:
             i = k - ord("1")
             if i < len(self.last_pred["preds"]):
@@ -600,7 +672,15 @@ def main():
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--debounce", type=int, default=3, help="frames needed to change gesture")
     ap.add_argument("--letter-pause", type=float, default=1.0, help="seconds of pause that end a letter")
+    rec = ap.add_argument_group("recording real letters for evaluate.py")
+    rec.add_argument("--record", action="store_true", help="prompt for letters and save them as labeled samples")
+    rec.add_argument("--writer", help="name or nickname of the person writing (required with --record)")
+    rec.add_argument("--rounds", type=int, default=3, help="how many times each letter is asked for")
+    rec.add_argument("--out", default=DEFAULT_DIR, help="folder for recordings")
     args = ap.parse_args()
+    if args.record and not args.writer:
+        ap.error("--record needs --writer NAME (a nickname is fine)")
+    recorder = Recorder(args.writer, args.out, args.rounds) if args.record else None
 
     cap = cv2.VideoCapture(args.camera)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -611,7 +691,7 @@ def main():
     h, w = frame.shape[:2]
 
     tracker = HandTracker()
-    app = App(w, h, args.letter_pause)
+    app = App(w, h, args.letter_pause, recorder)
     gestures = GestureDebouncer(args.debounce)
     fx, fy = OneEuroFilter(), OneEuroFilter()
     fps, t_prev = 0.0, time.monotonic()
@@ -662,6 +742,8 @@ def main():
             if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                 break
     finally:
+        if recorder is not None:
+            print(f"Saved {recorder.n_saved} letters to {recorder.path}")
         cap.release()
         tracker.close()
         cv2.destroyAllWindows()

@@ -74,6 +74,37 @@ Options: `--camera 1` (another webcam), `--width 1280 --height 720`, `--letter-p
 | `e` | Export PNG + JSON |
 | `q` / `Esc` | Quit |
 
+## Measuring accuracy on real air-writing
+
+The 99.8% above is measured on synthetic letters. To find out how the recognizer does on real handwriting, record some labeled letters and evaluate on them.
+
+**1. Record.** The app asks for one letter at a time, in shuffled order. Write it and pause, the same as in text mode.
+
+```bash
+python air_writing.py --record --writer alex              # 3 rounds of A-Z = 78 letters
+python air_writing.py --record --writer alex --rounds 1   # a quicker session
+```
+
+| Key | Action |
+|---|---|
+| `Backspace` | Discard the unfinished letter, or delete the last saved one and write it again |
+| `n` | Skip this letter for now (it is asked again at the end) |
+| `z` | Undo the last stroke of the current letter |
+
+Each letter is appended to `data/recordings/<writer>/<session>.jsonl` with its strokes as the app saw them and a timestamp for every point. The timing isn't used by the current model, but it lets a future stroke-sequence model train and test on the same recordings. Use a nickname for `--writer`: it ends up in folder names and reports.
+
+**2. Evaluate.**
+
+```bash
+python evaluate.py                                       # all recordings in data/recordings
+python evaluate.py --confusion cm.png --errors err.png   # also save a confusion matrix and the mistakes
+python evaluate.py --weights letter_mlp.npz new.npz      # compare two models on the same letters
+```
+
+The report gives top-1 and top-3 accuracy with a 95% confidence interval, accuracy per letter and per writer, and the most confused pairs. When you compare models, a McNemar test says whether the difference is bigger than chance. Your personal corrections (`my_letters.json`) are not used, so the numbers describe what a new user gets.
+
+A useful test set has letters from several people (at least 5 samples of every letter). Don't train on the same recordings you evaluate on.
+
 ## Retraining the letter model
 
 ```bash
@@ -89,8 +120,19 @@ air_writing.py          main app: tracking, gestures, drawing, toolbar, text mod
 letter_model.py         stroke rendering + NumPy letter recognizer with personalization
 letter_mlp.npz          trained network weights
 train_letters.py        synthetic dataset generation and training
+recording.py            recording mode: letter prompts, saving and loading samples
+evaluate.py             accuracy report on recorded letters, model comparison
+tests/                  pytest tests (no webcam needed)
 requirements.txt        runtime dependencies
 requirements-train.txt  extra dependencies for retraining
+requirements-dev.txt    everything plus pytest
+```
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
 ```
 
 ## Future work
