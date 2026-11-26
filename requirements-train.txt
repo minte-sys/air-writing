@@ -1,3 +1,4 @@
-# Extra dependencies for retraining the letter model (train_letters.py)
+# Extra dependencies for retraining the letter models (train_letters.py, train_strokes.py)
 -r requirements.txt
 scikit-learn
+torch

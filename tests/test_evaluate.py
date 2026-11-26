@@ -63,3 +63,14 @@ def test_compare_same_model_twice(recordings, capsys):
 def test_no_data(tmp_path):
     with pytest.raises(SystemExit):
         evaluate.main([str(tmp_path)])
+
+
+@pytest.mark.skipif(not evaluate.os.path.exists(evaluate.os.path.join(evaluate.HERE, "stroke_cnn.npz")),
+                    reason="stroke_cnn.npz not trained yet")
+def test_compare_image_and_stroke_models(recordings, capsys):
+    here = evaluate.HERE
+    reports = evaluate.main([str(recordings / "data"), "--weights",
+                             evaluate.os.path.join(here, "letter_mlp.npz"),
+                             evaluate.os.path.join(here, "stroke_cnn.npz")])
+    assert reports["stroke_cnn.npz"]["top1"] > 0.9
+    assert "letter_mlp.npz vs stroke_cnn.npz" in capsys.readouterr().out

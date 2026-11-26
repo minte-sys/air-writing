@@ -4,7 +4,10 @@ Measure how well letter models recognize REAL air-written letters.
 
 Record samples first:   python air_writing.py --record --writer alex
 Then evaluate:          python evaluate.py
-Compare two models:     python evaluate.py --weights letter_mlp.npz new_model.npz
+Compare two models:     python evaluate.py --weights letter_mlp.npz stroke_cnn.npz
+
+Both model types work: the image MLP (letter_mlp.npz) and the stroke-sequence CNN
+(stroke_cnn.npz, from train_strokes.py).
 
 The report shows top-1 / top-3 accuracy with a 95% confidence interval, accuracy per
 letter and per writer, and the letter pairs mixed up most often. With two or more models
@@ -32,6 +35,8 @@ import numpy as np
 
 from letter_model import IMG, LETTERS, LetterRecognizer
 from recording import DEFAULT_DIR, load_samples, stroke_points
+from stroke_model import KIND as STROKE_KIND
+from stroke_model import StrokeRecognizer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIN_PER_LETTER = 5        # warn when a letter has fewer samples than this
@@ -62,6 +67,15 @@ def mcnemar_p(b, c):
 
 
 # ---------------------------------------------------------------- evaluation
+
+def load_recognizer(path):
+    """Either model type, recognized from the weights file."""
+    with np.load(path) as w:
+        kind = str(w["kind"]) if "kind" in w.files else "image_mlp"
+    if kind == STROKE_KIND:
+        return StrokeRecognizer(path)
+    return LetterRecognizer(path)
+
 
 def evaluate(recognizer, samples):
     """Run the recognizer on every sample. Returns one result dict per sample."""
@@ -254,7 +268,7 @@ def main(argv=None):
         names = list(args.weights)
     all_results, reports = [], {}
     for name, weights in zip(names, args.weights):
-        results = evaluate(LetterRecognizer(weights), samples)
+        results = evaluate(load_recognizer(weights), samples)
         all_results.append(results)
         reports[name] = summarize(results)
         print_report(name, reports[name])

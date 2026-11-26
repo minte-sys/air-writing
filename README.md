@@ -120,6 +120,9 @@ air_writing.py          main app: tracking, gestures, drawing, toolbar, text mod
 letter_model.py         stroke rendering + NumPy letter recognizer with personalization
 letter_mlp.npz          trained network weights
 train_letters.py        synthetic dataset generation and training
+stroke_model.py         stroke-sequence features + NumPy 1D CNN recognizer
+stroke_cnn.npz          trained stroke-sequence weights
+train_strokes.py        stroke-sequence training (PyTorch) and export
 recording.py            recording mode: letter prompts, saving and loading samples
 evaluate.py             accuracy report on recorded letters, model comparison
 tests/                  pytest tests (no webcam needed)
@@ -127,6 +130,20 @@ requirements.txt        runtime dependencies
 requirements-train.txt  extra dependencies for retraining
 requirements-dev.txt    everything plus pytest
 ```
+
+## Stroke-sequence model (experimental)
+
+The image recognizer draws your strokes into a picture, so it can't tell which way, or in what order, you wrote them. `stroke_model.py` reads the path itself. Your strokes are joined into one path, with the jumps between them marked as pen-up. Then 64 points are spaced evenly along it, each with its position, direction and whether the pen was down. A small 1D convolutional network classifies that sequence. Training runs in PyTorch; the app and `evaluate.py` run it in NumPy, so the app doesn't need PyTorch.
+
+Training uses the same synthetic letters as the image model, plus air-writing mistakes that only matter when order is visible: strokes in another order or direction, a missed pen-up that joins two strokes, and an extra pen-up that splits one.
+
+```bash
+pip install -r requirements-train.txt
+python train_strokes.py                                   # writes stroke_cnn.npz
+python evaluate.py --weights letter_mlp.npz stroke_cnn.npz
+```
+
+The last command compares the two models on your recordings. The app still uses the image model; the stroke model replaces it only once it wins on real letters.
 
 ## Tests
 
