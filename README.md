@@ -41,7 +41,7 @@ There is no large dataset of air-written letters, so the recognizer is trained o
 Requires Python 3.9+ and a webcam.
 
 ```bash
-git clone https://github.com/<your-username>/air-writing.git
+git clone https://github.com/minte-sys/air-writing.git
 cd air-writing
 python -m venv venv
 venv\Scripts\activate          # Windows
@@ -77,7 +77,7 @@ Options: `--camera 1` (another webcam), `--width 1280 --height 720`, `--letter-p
 ## Retraining the letter model
 
 ```bash
-pip install scikit-learn
+pip install -r requirements-train.txt
 python train_letters.py              # takes a few minutes, writes letter_mlp.npz
 python train_letters.py --preview    # saves preview.png with sample training letters
 ```
@@ -85,11 +85,12 @@ python train_letters.py --preview    # saves preview.png with sample training le
 ## Project structure
 
 ```
-air_writing.py      main app: tracking, gestures, drawing, toolbar, text mode
-letter_model.py     stroke rendering + NumPy letter recognizer with personalization
-letter_mlp.npz      trained network weights
-train_letters.py    synthetic dataset generation and training
-requirements.txt    dependencies
+air_writing.py          main app: tracking, gestures, drawing, toolbar, text mode
+letter_model.py         stroke rendering + NumPy letter recognizer with personalization
+letter_mlp.npz          trained network weights
+train_letters.py        synthetic dataset generation and training
+requirements.txt        runtime dependencies
+requirements-train.txt  extra dependencies for retraining
 ```
 
 ## Future work

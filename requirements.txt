@@ -1,1 +1,6 @@
-mediapipe
+# Runtime dependencies for air_writing.py
+mediapipe>=0.10.14
+# Same OpenCV build mediapipe installs. Don't add opencv-python as well:
+# both packages ship the cv2 module and overwrite each other.
+opencv-contrib-python
+numpy
